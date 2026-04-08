@@ -1,0 +1,115 @@
+version: "3.9"
+
+# =============================================
+# USO LOCAL (desarrollo):
+#   docker-compose up --build
+#
+# USO EN AWS (EC2 Back + EC2 Data separados):
+#   - En EC2 Back:  solo el servicio "backend"
+#   - En EC2 Data:  solo el servicio "db"
+#   Ver sección de comentarios al final.
+# =============================================
+
+services:
+
+  # ------------------------------------------
+  # EC2 Data — MySQL
+  # ------------------------------------------
+  db:
+    build:
+      context: ./database
+      dockerfile: Dockerfile
+    container_name: tasks-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-tasksdb}
+      MYSQL_USER:          ${MYSQL_USER:-taskuser}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-taskpass}
+    ports:
+      # Solo exponer el puerto dentro de la red interna.
+      # En AWS, el Security Group restringe el acceso externo.
+      - "3306:3306"
+    volumes:
+      # Volumen persistente: los datos sobreviven al reinicio del contenedor
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "${MYSQL_USER:-taskuser}", "-p${MYSQL_PASSWORD:-taskpass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ------------------------------------------
+  # EC2 Back — Spring Boot API
+  # ------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tasks-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy   # espera a que MySQL esté listo
+    environment:
+      DB_HOST:         ${DB_HOST:-db}           # nombre del servicio Docker o IP privada del EC2 Data
+      DB_PORT:         ${DB_PORT:-3306}
+      DB_NAME:         ${DB_NAME:-tasksdb}
+      DB_USER:         ${DB_USER:-taskuser}
+      DB_PASSWORD:     ${DB_PASSWORD:-taskpass}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}    # en prod: http://<IP-publica-Front>
+    ports:
+      - "3000:3000"
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/tasks/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# ------------------------------------------
+# Volúmenes y redes
+# ------------------------------------------
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  backend-network:
+    driver: bridge
+
+# =============================================
+# DESPLIEGUE EN AWS (instancias separadas)
+# =============================================
+#
+# En EC2 Data (subred privada):
+#   1. Sube la carpeta /database al servidor
+#   2. docker build -t tasks-db .
+#   3. docker run -d --name tasks-db \
+#        -e MYSQL_ROOT_PASSWORD=rootpass \
+#        -e MYSQL_DATABASE=tasksdb \
+#        -e MYSQL_USER=taskuser \
+#        -e MYSQL_PASSWORD=taskpass \
+#        -v mysql_data:/var/lib/mysql \
+#        -p 3306:3306 \
+#        tasks-db
+#
+# En EC2 Back (subred privada):
+#   1. Sube la carpeta /backend al servidor
+#   2. docker build -t tasks-api .
+#   3. docker run -d --name tasks-api \
+#        -e DB_HOST=<IP-PRIVADA-EC2-Data> \
+#        -e DB_PORT=3306 \
+#        -e DB_NAME=tasksdb \
+#        -e DB_USER=taskuser \
+#        -e DB_PASSWORD=taskpass \
+#        -e ALLOWED_ORIGINS=http://<IP-PUBLICA-EC2-Front> \
+#        -p 3000:3000 \
+#        tasks-api
+# =============================================
