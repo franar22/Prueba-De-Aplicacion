@@ -372,11 +372,7 @@
 <script>
   // ── Configuración ──────────────────────────────────────────
   // En local usa http://localhost:3000
-  // En AWS cambia por la IP privada del EC2 Back:
-  //   const API = 'http://10.0.2.XX:3000';
-  const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'http://localhost:3000'
-    : `http://${window.location.hostname}:3000`;   // mismo host, puerto 3000
+  const API = 'http://10.0.6.219:3000';
 
   // Para apuntar a un servidor diferente, sobreescribe aquí:
   // const API = 'http://10.0.2.50:3000';
